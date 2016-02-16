@@ -4,45 +4,53 @@ Created on Tue Feb 09 19:41:01 2016
 
 Neural Network with one hidden unit layer
 
-@author: Tadeze
+@author: Tadesse Zemicheal
 """
 import numpy as np
-import matplotlib.pylab as plt
 
 """
 Activation factory generator class
 """
+class Activation(object):
+    def __init__(self,activation):
+        self.activation = activation
+
+    def act(self):
+        self.activations = {  # list of activation functions
+            'sigmoid': lambda x: self.sigmoid(x),
+            'relu': lambda x: 0 if x<0 else x
+        }
+        return self.activations[self.activation]
+    def dact(self):
+        self.diff_activation = {
+            # List of differentiation of the activation function
+            'sigmoid': lambda x: self.sigmoid(x) * (1 - self.sigmoid(x)),
+            'relu': lambda x: self.d_relu(x)
+        }
+        return self.diff_activation[self.activation]
 
 
-def sigmoid(x):
-    if x > 35:
-        x = 35
-    if x < -35:
-        x = -35
-    return 1.0 / (1.0 + np.exp(-x))
+# Activation function body
+    def sigmoid(self,x):
+        if x > 35:
+            x = 35
+        if x < -35:
+            x = -35
+        return 1.0 / (1.0 + np.exp(-x))
 
+    def d_relu(self,x):
+        if x > 0:
+            return 1
+        elif x == 0:
+            return np.random.uniform(0, 1)
+        else:
+            return 0
 
-def d_sigmoid(x):
-    return sigmoid(x)(1 - sigmoid(x))
-
-
-# relu
-def relu(x):
-    return 0 if x<0 else x
-
-
-# drelu
-def d_relu(x):
-    if x > 0:
-        return 1
-    elif x == 0:
-        return np.random.uniform(0, 1)
-    else:
-        return 0
-
-
+"""
+Main Neural network layer
+"""
 class Neuron(object):
-    def __init__(self, X, learning_rate, minbatch, momentum, n_hidden, output, epoch):
+    def __init__(self, X, learning_rate, minbatch, momentum, n_hidden, output, epoch,activation="relu"):
         self.learning_rate = learning_rate
         self.n_hidden = n_hidden
         self.minbatch = minbatch
@@ -55,102 +63,124 @@ class Neuron(object):
         # bias initialization
         self.b1 = np.zeros((self.n_hidden, 1))
         self.b2 = np.zeros((self.output, 1))
-
-    # Evaluate cross entrop loss function
+        self.activation =Activation(activation)
+        self.softmax = Activation("sigmoid")
+    """ Compute entropy loss
+    """
     def evaluate_loss(self, score, pred):
         yl = len(pred)
         score=np.clip(score,1e-3,1-1e-3)  #clip for overflow of 1 or 0
         pred=np.clip(pred.T,1e-3,1-1e-3)
         return  -np.sum((score * np.log(pred) + (1 - score) * np.log(1 - pred)))
 
+    """
+    Non-linear activation function
+    """
+    def nonlinear(self,value,deriv=False):
+        if deriv:
+            return np.vectorize(self.activation.dact(), otypes=[np.float64])(value)
+        else:
+            return np.vectorize(self.activation.act(), otypes=[np.float64])(value)
+
+    """
+    Forward pass of a training examples DxN dimension
+     returns Nx1 score, l1 layer and l2 layer value
+    """
     def forward(self, x_train):
-
-        l1 = np.dot(self.w1, x_train.T) + self.b1
-        nonl_l1 =np.vectorize(relu)(l1)      #np.vectorize(self.act.act(), otypes=[np.float64])(l1)
-        l2 = np.dot(self.w2, nonl_l1) + self.b2
-        z = np.vectorize(sigmoid)(l2)        # np.vectorize(self.softmax.act(),otypes=[np.float64])(l2)  # output score for class 1
+        l1 = np.dot(self.w1, x_train.T) + self.b1  #layer 1
+        nonlinear_l1 =self.nonlinear(l1)  # hidden layer
+        l2 = np.dot(self.w2, nonlinear_l1) + self.b2  #hidden -to -outpu
+        z = np.vectorize(self.softmax.act())(l2)  #softmax
         return z, l1, l2
-        # return mean cross entropy loss and prediction probabilities
 
-    def backprop(self, xb, yb, l1, l2, zb):
-        N = np.shape(yb)[0]
+    """
+    Backprop error to layers
+    """
+    def backprop(self, X, Y,Z, l1, l2):
+        N = len(Y)
         # error from output layer
-        l2_error = zb-yb
+        l2_error = Z-Y
         # gradient of output layer
-        nonl_l1 =np.vectorize(relu, otypes=[np.float64])(l1)        #np.vectorize(self.act.act(), otypes=[np.float64])(l1)
+        nonl_l1 =self.nonlinear(l1)
         dldw2 = nonl_l1.dot(l2_error).T /N  # gradient of w2
 
         # error from hidden unit layer
         l1_error = l2_error.dot(self.w2)
-        # gradient  of
+        dldw1_delta = l1_error.T * self.nonlinear(l1,deriv=True)
+        dldw1 = dldw1_delta.dot(X)/N #gradient of input layer
 
-        dldw1_delta = l1_error.T * np.vectorize(d_relu, otypes=[np.float64])(l1)     #np.vectorize(self.act.dact(), otypes=[np.float64])(l1)
-        dldw1 = dldw1_delta.dot(xb)/N
-
-        # bias
-        grad_b1 = np.mean(dldw1_delta, axis=1, keepdims=True)  #just 1xH average over
-        grad_b2 = np.mean(l2_error,keepdims=True)     #just 1x1 bias for the hidden layer , average over batches.
+        #gradient of bias
+        grad_b1 = np.mean(dldw1_delta, axis=1, keepdims=True)
+        grad_b2 = np.mean(l2_error,keepdims=True)
 
         return dldw1, dldw2, grad_b1, grad_b2
 
+    #compute accuray and entropy loss prediction
     def predict(self, x_test, y_test):
-        z, l1, l2 = self.forward(x_test)
+        z, l1, l2 = self.forward(x_test)   #move forward to prediction
         accuray = 1 - np.mean(np.abs(np.round(z) - y_test.T))
         loss = self.evaluate_loss(y_test, z)
         return accuray, loss/len(y_test)
 
+    #Train Network and check accuracy of testing in each epoch
     def train(self, x_train, y_train, test_data, test_label):
 
-        # initialize weights and biase
-        log = open('log_file_output.csv', 'w')
-        train_size, dimension = np.shape(x_train)
-        momentum_w1 = np.zeros_like(self.w1)
-        momentum_w2 = np.zeros_like(self.w2)
-        momentum_b1 = np.zeros_like(self.b1)
-        momentum_b2 = np.zeros_like(self.b2)
+        filename = 'output_hidden'+str(self.n_hidden)+'_lrate_'+str(self.learning_rate)+'_minbatch_'+str(self.minbatch)+"_epoch_"+str(self.epoch)+".csv"
+        #log = open(filename, 'w')
 
-        # number of minibatches
+        train_size, dimension = np.shape(x_train)
+        self.momentum_w1 = np.zeros_like(self.w1)
+        self.momentum_w2 = np.zeros_like(self.w2)
+        self.momentum_b1 = np.zeros_like(self.b1)
+        self.momentum_b2 = np.zeros_like(self.b2)
+
+        # Number of epoch to run
 
         for ep in xrange(self.epoch):
-            # sample index
-            n_sample = range(train_size)
-            np.random.shuffle(n_sample)
-            # random shuffle in every epch
-            it = 0
-            epoch_error = []
+            # sample stochastic minibatch gradient descent
+            self.SGD(train_size, x_train, y_train) #check prediction in every epoch
+        #training_err = self.predict(x_train, y_train)
+        #testing_err = self.predict(test_data, test_label)
 
-            while it < train_size - self.minbatch:
-                # Forward pass for all batch size  and compute error
-                # update w1 and w2 based on the error size
-                # for i in range(it,it+self.minbatch-1):
-                x = x_train[it:self.minbatch + it, ]
-                y = y_train[it:self.minbatch + it]
+        #print (training_err, testing_err)
+        #print "\n"
+        #log.write( str(ep) + "," + str(training_err[0]) + "," +str(training_err[1])+',' +str(testing_err[0])+','+str(testing_err[1]))
+        #log.write("\n")
 
-                z, l1, l2 = self.forward(x)
-                dw1, dw2, grad_b1, grad_b2 = self.backprop(x, y, l1, l2, z.T)
+        #log.close()
+        print "Iteration completed"
 
-                momentum_w1 = self.momentum * momentum_w1 -self.learning_rate * dw1
-                momentum_w2 = self.momentum * momentum_w2 - self.learning_rate * dw2
+    def SGD(self, train_size, x_train, y_train):
+        n_sample = range(train_size)
+        np.random.shuffle(n_sample)
+        # random shuffle in every epch
+        it = 0
+        while it < train_size - self.minbatch:
+            # Forward pass for all batch size  and compute error
+            # update w1 and w2 based on the error size
+            # for i in range(it,it+self.minbatch-1):
 
-                momentum_b1 = self.momentum * momentum_b1 +self.learning_rate * grad_b1
-                momentum_b2 = self.momentum * momentum_b2 + self.learning_rate * grad_b2
+            x = x_train[it:self.minbatch + it, ]  # slice on batch of training examples
+            y = y_train[it:self.minbatch + it]
 
-                self.w2 = self.w2 + momentum_w2
-                self.w1 = self.w1 + momentum_w1
-                self.b1 = self.b1 + momentum_b1
-                self.b2 = self.b2 + momentum_b2
+            z, l1, l2 = self.forward(x)  # forward pass
+            dw1, dw2, grad_b1, grad_b2 = self.backprop(x, y,z.T,l1, l2)  # backprop batch examples
 
-                it += self.minbatch
+            # update momentum
+            self.momentum_w1 = self.momentum * self.momentum_w1 - self.learning_rate * dw1
+            self.momentum_w2 = self.momentum * self.momentum_w2 - self.learning_rate * dw2
 
+            self.momentum_b1 = self.momentum * self.momentum_b1 + self.learning_rate * grad_b1
+            self.momentum_b2 = self.momentum * self.momentum_b2 + self.learning_rate * grad_b2
 
-            training_err = self.predict(x_train, y_train)
-            testing_err = self.predict(test_data, test_label)
-            print (training_err, testing_err)
-            print "\n"
-            log.write( str(ep) + "," + str(training_err[0]) + "," +str(training_err[1])+',' +str(testing_err[0]+','+str(testing_err[1])))
-            log.write("\n")
+            # update weight
+            self.w2 = self.w2 + self.momentum_w2
+            self.w1 = self.w1 + self.momentum_w1
+            self.b1 = self.b1 + self.momentum_b1
+            self.b2 = self.b2 + self.momentum_b2
 
-        log.close()
+            it += self.minbatch
+
 
 def main():
     # np.random.seed(1432)
@@ -164,48 +194,41 @@ def main():
 
     scaling = lambda x: (x - np.min(x, axis=0)) / (np.max(x, axis=0) - np.min(x, axis=0))
     normalize = lambda x: (x - np.mean(x, axis=0)) / (np.std(x, axis=0))
-    X_train = train_data #[1:5000,:]
-    Y_train = train_label#[1:5000] #[1:5000]
-    X_test = test_data
+
     Y_test = test_label
-    X_test = normalize(X_test)
+    Y_train = train_label
+    X_test = normalize(test_data)
+    X_train = normalize(train_data)
 
-    X_train = normalize(X_train)  # (X_train-np.min(X_train,axis=0))/(np.max(X_train,axis=0)-np.min(X_train,axis=0))
-
-    learning_rate = 0.001
-    nn = Neuron(X_train, learning_rate=learning_rate, minbatch=80, momentum=0.9, n_hidden=200, output=1, epoch=50)
+    ## -------- Run experiment --------------
+    nn = Neuron(X_train, learning_rate=0.001, minbatch=50, momentum=0.9, n_hidden=50, output=1, epoch=50)
     nn.train(X_train, Y_train, X_test, Y_test)
-    # print nn.predit(X_train,Y_train)
+    accuracy=nn.predict(X_test,Y_test)
 
 
-def debug():
-    ########### Debug ####################
-    x = np.array([[0, 0, 1],
-                  [0, 1, 1],
-                  [1, 0, 1],
-                  [1, 1, 1]])
-
-    y = np.array([[0],
-                  [1],
-                  [1],
-                  [0]])
-    learning_rate = 0.005
-    nn = Neuron(x, learning_rate=learning_rate, minbatch=2, momentum=0.8, n_hidden=9, output=1, epoch=60)
-    err = nn.train(x, y, x, y)
-
-
+    """
+     Uncomment to run experiment with multiple tunning parameter
+    """
+    ######### To experiment with tunning parameters
+    # alphas = [0.001,0.0005]
+    # hidden_units = [40,60,80,120]
+    # minibatchs = [30,50,120,250]
+    # lrate = [0.1,0.001,0.005,0.0001]
+    # #learning rate
+    # filename ='learningcurve.csv'
+    # log =open(filename,'w')
+    # for bch in hidden_units:
+    #     nn = Neuron(X_train, learning_rate=0.001, minbatch=50, momentum=0.9, n_hidden=bch, output=1, epoch=50)
+    #     nn.train(X_train, Y_train, X_test, Y_test)
+    #     acc=nn.predict(X_test,Y_test)
+    #     log.write( str(bch) + "," + str(acc[0]) + "," +str(acc[1])+'\n')
+    # log.close()
+    # # print nn.predit(X_train,Y_train)
 if __name__ == '__main__':
     """
-    Create Neuron object with different input parameter and plot or output the result for
-    different parameter value
-    @learningrate
-    @numberofHiddenlayer
-    train the model and test on the test data
-    @include momentum"""
+    """
     # unittest.main()
     # debug
     #debug()
     # main
-
-    #(999)
     main()
