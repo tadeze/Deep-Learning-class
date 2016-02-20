@@ -31,9 +31,36 @@ diff.sigmoid<-function(x)
 }
 
 ## Main neural net class ## 
-
-
-
+init<-function(minibatch_size,lrate)
+{
+	minbatch<<-minibatch_size
+	lrate<<-lrate
+	momentum <<-0
+}
+forwardpas<-function()
+{
+	
+}
+backprop<-function()
+{
+	
+}
+#' Stochastic minibatch gradient descendent
+#' 
+MSGD<-function(x_train,y_train){
+	train_size = nrow(x_train)
+	nsample <- sample(train_size,train_size,replace = F)
+	it=0
+	while(it<(train_size - minbatch))
+	{
+		x <- x_train[it:(minbatch+it),]
+		y <- y_train[it:(minbatch+it)]
+		#forward pass 
+		z<- forwardpass(x)
+		backprop(x,y,z)
+		
+	}
+}
 
 
 
